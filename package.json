@@ -1,14 +1,11 @@
 {
-  "name": "telegram-firebase-lootlabs-bot",
+  "name": "m92-compressed",
   "version": "1.0.0",
-  "description": "Telegram key bot integrated with Firebase and LootLabs",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
   "dependencies": {
-    "axios": "^1.6.0",
-    "express": "^4.18.2",
-    "telegraf": "^4.15.3"
+    "telegraf": "^4.16.3",
+    "axios": "^1.7.2",
+    "firebase-admin": "^12.1.0"
   }
 }
