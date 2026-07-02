@@ -2,7 +2,6 @@ const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const express = require('express');
 
-// إعداد السيرفر والبوت
 const app = express();
 app.use(express.json());
 
@@ -16,10 +15,7 @@ const bot = new Telegraf(BOT_TOKEN);
 
 bot.start((ctx) => {
     const userId = ctx.from.id;
-    // استبدل رابط اللينك الخاص بك من LootLabs
-    // نرسل الـ userId كـ subid لكي نتعرف عليه لاحقاً
-    const lootlabsLink = `https://loot-link.com/s?Q8x9t8az&subid=${userId}`; 
-
+    const lootlabsLink = `https://loot-link.com/s?Q8x9t8az&subid=${userId}`;
     ctx.reply(`أهلاً بك يا غالي! 🌟\n\nللحصول على المفتاح الخاص بك، يرجى تخطي هذا الرابط أولاً:\n🔗 ${lootlabsLink}\n\nبعد تخطي الرابط بنجاح، اضغط على زر /getkey للحصول على مفتاحك مباشرة.`);
 });
 
@@ -27,28 +23,37 @@ bot.command('getkey', async (ctx) => {
     const userId = ctx.from.id;
 
     try {
-        // 1. التحقق من حالة المستخدم في Firebase Realtime Database
+        // 1. التحقق من حالة المستخدم في Firebase
         const userCheck = await axios.get(`${FIREBASE_DB_URL}/users/${userId}.json`);
         const userData = userCheck.data;
 
         if (userData && userData.completedLootLabs === true) {
-            
-            // 2. جلب المفاتيح المتوفرة من Firebase
+
+            // 2. جلب المفاتيح من Firebase
             const keysResponse = await axios.get(`${FIREBASE_DB_URL}/keys.json`);
             const keysData = keysResponse.data;
 
             if (!keysData) {
-                return ctx.reply("❌ نعتذر منك، لا توجد مفاتيح متوفرة في قاعدة البيانات حالياً. يرجى مراسلة الإدارة.");
+                return ctx.reply("❌ لا توجد مفاتيح متوفرة حالياً. يرجى مراسلة الإدارة.");
             }
 
-            // البحث عن أول مفتاح غير مستخدم (used: false)
+            // البحث عن مفتاح متاح:
+            // - device_id فارغ = لم يُستخدم بعد
+            // - banned غير true
+            // - used غير true
             let foundKeyId = null;
             let foundKeyValue = null;
 
             for (const keyId in keysData) {
-                if (keysData[keyId].used === false) {
+                const k = keysData[keyId];
+                const isUsed = k.used === true;
+                const isBanned = k.banned === true;
+                const hasDevice = k.device_id && k.device_id !== "";
+                const assignedTo = k.assignedTo;
+
+                if (!isUsed && !isBanned && !hasDevice && !assignedTo) {
                     foundKeyId = keyId;
-                    foundKeyValue = keysData[keyId].keyValue;
+                    foundKeyValue = k.key; // الحقل الصحيح هو "key" وليس "keyValue"
                     break;
                 }
             }
@@ -57,22 +62,23 @@ bot.command('getkey', async (ctx) => {
                 return ctx.reply("❌ نفدت المفاتيح المتاحة حالياً! سنقوم بتجديدها قريباً.");
             }
 
-            // 3. تحديث حالة المفتاح في Firebase ليصبح مستخدماً ومربوطاً بالمستخدم
+            // 3. تحديث المفتاح ليصبح محجوزاً
             await axios.patch(`${FIREBASE_DB_URL}/keys/${foundKeyId}.json`, {
                 used: true,
-                assignedTo: userId
+                assignedTo: userId,
+                device_id: `telegram_${userId}`
             });
 
-            // 4. إعادة تعيين حالة المستخدم في قاعدة البيانات حتى لا يسحب مفتاحاً آخر بنفس الرابط
+            // 4. إعادة تعيين حالة المستخدم
             await axios.patch(`${FIREBASE_DB_URL}/users/${userId}.json`, {
                 completedLootLabs: false
             });
 
-            // إرسال المفتاح للمستخدم
-            ctx.reply(`🎉 تفضل، هذا هو المفتاح الخاص بك:\n\n\`${foundKeyValue}\``, { parse_mode: 'MarkdownV2' });
+            // إرسال المفتاح
+            ctx.reply(`🎉 تفضل، هذا هو المفتاح الخاص بك:\n\n${foundKeyValue}`);
 
         } else {
-            ctx.reply("⚠️ لم تقم بتخطي الرابط بعد، أو أنك استهلكت رابطك السابق. يرجى الضغط على /start وتخطي الرابط أولاً.");
+            ctx.reply("⚠️ لم تقم بتخطي الرابط بعد. يرجى الضغط على /start وتخطي الرابط أولاً.");
         }
     } catch (error) {
         console.error(error);
@@ -80,18 +86,16 @@ bot.command('getkey', async (ctx) => {
     }
 });
 
-// --- استقبال تواصل LootLabs (Webhook) ---
+// --- استقبال Webhook من LootLabs ---
 app.post('/lootlabs-webhook', async (req, res) => {
     try {
         const userId = req.body.subid || req.query.subid;
 
         if (userId) {
-            // تحديث حالة المستخدم في Firebase Realtime Database
             await axios.patch(`${FIREBASE_DB_URL}/users/${userId}.json`, {
                 completedLootLabs: true,
                 timestamp: Date.now()
             });
-
             return res.status(200).send('Success');
         }
         res.status(400).send('Missing subid');
@@ -104,4 +108,4 @@ app.post('/lootlabs-webhook', async (req, res) => {
 // تشغيل البوت والسيرفر
 bot.launch();
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server is running 24/7 on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
