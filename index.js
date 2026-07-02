@@ -13,7 +13,7 @@ const bot = new Telegraf(BOT_TOKEN);
 
 bot.start((ctx) => {
     const userId = ctx.from.id;
-    const lootlabsLink = `https://loot-link.com/s?Q8x9t8az&subid=${userId}`;
+    const lootlabsLink = `https://loot-link.com/s?Q8x9t8az&puid=${userId}`;
     ctx.reply(`أهلاً بك يا غالي! 🌟\n\nللحصول على المفتاح الخاص بك، يرجى تخطي هذا الرابط أولاً:\n🔗 ${lootlabsLink}\n\nبعد تخطي الرابط بنجاح، اضغط على زر /getkey للحصول على مفتاحك مباشرة.`);
 });
 
