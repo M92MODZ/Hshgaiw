@@ -11,8 +11,6 @@ const FIREBASE_DB_URL = 'https://duce-basic-default-rtdb.firebaseio.com';
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- منطق البوت ---
-
 bot.start((ctx) => {
     const userId = ctx.from.id;
     const lootlabsLink = `https://loot-link.com/s?Q8x9t8az&subid=${userId}`;
@@ -23,13 +21,23 @@ bot.command('getkey', async (ctx) => {
     const userId = ctx.from.id;
 
     try {
-        // 1. التحقق من حالة المستخدم في Firebase
-        const userCheck = await axios.get(`${FIREBASE_DB_URL}/users/${userId}.json`);
-        const userData = userCheck.data;
+        // التحقق من LootLabs API مباشرة
+        const lootlabsResponse = await axios.get(
+            `https://api.lootlabs.gg/api/lootlabs/task_completed?subid=${userId}`,
+            {
+                headers: {
+                    'Authorization': `Bearer ${LOOTLABS_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
 
-        if (userData && userData.completedLootLabs === true) {
+        const completed = lootlabsResponse.data?.completed === true || 
+                          lootlabsResponse.data?.task_completed === true ||
+                          lootlabsResponse.data?.status === 'completed';
 
-            // 2. جلب المفاتيح من Firebase
+        if (completed) {
+            // جلب المفاتيح من Firebase
             const keysResponse = await axios.get(`${FIREBASE_DB_URL}/keys.json`);
             const keysData = keysResponse.data;
 
@@ -37,23 +45,14 @@ bot.command('getkey', async (ctx) => {
                 return ctx.reply("❌ لا توجد مفاتيح متوفرة حالياً. يرجى مراسلة الإدارة.");
             }
 
-            // البحث عن مفتاح متاح:
-            // - device_id فارغ = لم يُستخدم بعد
-            // - banned غير true
-            // - used غير true
             let foundKeyId = null;
             let foundKeyValue = null;
 
             for (const keyId in keysData) {
                 const k = keysData[keyId];
-                const isUsed = k.used === true;
-                const isBanned = k.banned === true;
-                const hasDevice = k.device_id && k.device_id !== "";
-                const assignedTo = k.assignedTo;
-
-                if (!isUsed && !isBanned && !hasDevice && !assignedTo) {
+                if (!k.used && !k.banned && (!k.device_id || k.device_id === "") && !k.assignedTo) {
                     foundKeyId = keyId;
-                    foundKeyValue = k.key; // الحقل الصحيح هو "key" وليس "keyValue"
+                    foundKeyValue = k.key;
                     break;
                 }
             }
@@ -62,34 +61,72 @@ bot.command('getkey', async (ctx) => {
                 return ctx.reply("❌ نفدت المفاتيح المتاحة حالياً! سنقوم بتجديدها قريباً.");
             }
 
-            // 3. تحديث المفتاح ليصبح محجوزاً
             await axios.patch(`${FIREBASE_DB_URL}/keys/${foundKeyId}.json`, {
                 used: true,
                 assignedTo: userId,
                 device_id: `telegram_${userId}`
             });
 
-            // 4. إعادة تعيين حالة المستخدم
-            await axios.patch(`${FIREBASE_DB_URL}/users/${userId}.json`, {
-                completedLootLabs: false
-            });
-
-            // إرسال المفتاح
             ctx.reply(`🎉 تفضل، هذا هو المفتاح الخاص بك:\n\n${foundKeyValue}`);
 
         } else {
             ctx.reply("⚠️ لم تقم بتخطي الرابط بعد. يرجى الضغط على /start وتخطي الرابط أولاً.");
         }
+
     } catch (error) {
-        console.error(error);
-        ctx.reply("حدث خطأ أثناء الاتصال بقاعدة البيانات. يرجى المحاولة لاحقاً.");
+        console.error('Error:', error.response?.data || error.message);
+        
+        // fallback: تحقق من Firebase
+        try {
+            const userCheck = await axios.get(`${FIREBASE_DB_URL}/users/${userId}.json`);
+            const userData = userCheck.data;
+
+            if (userData && userData.completedLootLabs === true) {
+                const keysResponse = await axios.get(`${FIREBASE_DB_URL}/keys.json`);
+                const keysData = keysResponse.data;
+
+                let foundKeyId = null;
+                let foundKeyValue = null;
+
+                for (const keyId in keysData) {
+                    const k = keysData[keyId];
+                    if (!k.used && !k.banned && (!k.device_id || k.device_id === "") && !k.assignedTo) {
+                        foundKeyId = keyId;
+                        foundKeyValue = k.key;
+                        break;
+                    }
+                }
+
+                if (!foundKeyValue) {
+                    return ctx.reply("❌ نفدت المفاتيح المتاحة حالياً!");
+                }
+
+                await axios.patch(`${FIREBASE_DB_URL}/keys/${foundKeyId}.json`, {
+                    used: true,
+                    assignedTo: userId,
+                    device_id: `telegram_${userId}`
+                });
+
+                await axios.patch(`${FIREBASE_DB_URL}/users/${userId}.json`, {
+                    completedLootLabs: false
+                });
+
+                ctx.reply(`🎉 تفضل، هذا هو المفتاح الخاص بك:\n\n${foundKeyValue}`);
+            } else {
+                ctx.reply("⚠️ لم تقم بتخطي الرابط بعد. يرجى الضغط على /start وتخطي الرابط أولاً.");
+            }
+        } catch (fbError) {
+            console.error('Firebase error:', fbError.message);
+            ctx.reply("حدث خطأ أثناء الاتصال. يرجى المحاولة لاحقاً.");
+        }
     }
 });
 
-// --- استقبال Webhook من LootLabs ---
+// استقبال Webhook من LootLabs
 app.post('/lootlabs-webhook', async (req, res) => {
     try {
         const userId = req.body.subid || req.query.subid;
+        console.log('Webhook received, userId:', userId);
 
         if (userId) {
             await axios.patch(`${FIREBASE_DB_URL}/users/${userId}.json`, {
@@ -105,7 +142,9 @@ app.post('/lootlabs-webhook', async (req, res) => {
     }
 });
 
-// تشغيل البوت والسيرفر
+// Keep alive
+app.get('/', (req, res) => res.send('Bot is running!'));
+
 bot.launch();
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
